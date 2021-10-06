@@ -1,5 +1,7 @@
 import pymongo, json, pprint, argparse
 
+#Simple script to insert data into mongodb in the correct format using the cli
+
 user = 'jhammer3'
 topic = 'topic'
 

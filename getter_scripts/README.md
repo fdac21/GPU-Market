@@ -1,0 +1,1 @@
+This directory contains scripts to get data. Scripts that contain "Url" compile url sources (to be put in /data/urls). All other scripts produce data directly (to be put in data/raw)

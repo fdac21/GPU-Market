@@ -1,0 +1,24 @@
+{
+    "cards": [                   
+        "Nvidia RTX 3060-Ti",      
+        "Nvidia RTX 3070",         
+        "Nvidia RTX 3080",         
+        "Nvidia GTX 1660S (Super)",
+        "Nvidia RTX 2070S (Super)",
+        "Nvidia GTX 1650S (Super)",
+        "Nvidia RTX 2060",         
+        "Nvidia RTX 2060S (Super)",
+        "AMD RX 5600-XT",          
+        "Nvidia GTX 1060-6GB",     
+        "Nvidia GTX 1660-Ti",      
+        "Nvidia GTX 1650",         
+        "Nvidia GTX 1050-Ti",      
+        "AMD RX 5700",             
+        "Nvidia GTX 1070",         
+        "Nvidia RTX 3060",         
+        "AMD RX 590",              
+        "AMD RX 5700-XT",          
+        "AMD RX 580",              
+        "Nvidia GTX 1660"
+    ]
+}
