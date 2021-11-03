@@ -3,6 +3,7 @@ import json
 import math
 from datetime import date, timedelta
 import pandas as pd
+from scipy.stats import spearmanr
 
 def fn2pn(fn):
     return os.path.splitext(os.path.basename(fn))[0]
@@ -29,22 +30,19 @@ def loadDirR(path, data):
     for fileName in os.listdir(path):
         filePath = path + '/' + fileName
         if os.path.isdir(filePath):
-            data[fileName] = {'__type__': 'structure'}
+            data[fileName] = {}
             loadDirR(filePath, data[fileName])
         else:
             pn = fn2pn(fileName)
             data[pn] = loadFile(filePath)
-            data[pn]['__type__'] = 'data'
     return data
 
 def loadDir(path):
     return loadDirR(path, {})
 
 def _transformCardPriceHistory(data):
-    newData = {'__type__': 'file'}
+    newData = {}
     for prop in data:
-        if prop == '__type__':
-            continue
         datum = data[prop]
         year, month, day = datum['day'].split('-')
         d = date(int(year), int(month), int(day))
@@ -53,11 +51,7 @@ def _transformCardPriceHistory(data):
 
 def transformCardPriceHistory(data):
     for propName, card in data['cardPriceHistory'].items():
-        if propName == '__type__':
-            continue
         for fname in card:
-            if fname == '__type__':
-                continue
             card[fname] = _transformCardPriceHistory(card[fname])
 
 
@@ -72,8 +66,6 @@ def _transformCardData(data):
 def transformCardData(data):
     data['cardData'] = data['cardData']['cardData']
     for propName in data['cardData']:
-        if propName == '__type__':
-            continue
         data['cardData'][propName] = _transformCardData(data['cardData'][propName])
 
 
@@ -97,8 +89,6 @@ def transformCovidData(data):
 
 def transformCryptoData(data):
     for coinName in data['cryptoData']:
-        if coinName == '__type__':
-            continue
         coin = data['cryptoData'][coinName]
         newData = {}
         for i in range(len(coin['Date'])):
@@ -121,7 +111,7 @@ def transformTrendData(data):
     trends = data['trendData']['googleTrendData']
     newData = {}
     for cardName in trends:
-        if cardName == 'date' or cardName == '__type__':
+        if cardName == 'date':
             continue
         newData[cardName] = {}
         for i in range(len(trends['date'])):
@@ -139,7 +129,6 @@ def transformDates(data):
     transformSoftwareData(data)     #softwareData
     transformTrendData(data)        #trend data
 
-
 def _makeContinuous(data):
     dates = [key for key in data if isinstance(key, date)]
     curr = min(dates)
@@ -150,20 +139,47 @@ def _makeContinuous(data):
         if curr not in data:
             data[curr] = fill
 
-
-def _makeContinuousR(data):
-    for prop in list(data):
-        if prop == '__type__':
-            continue
-        elif isinstance(prop, date):
-            _makeContinuous(data)
-        else:
-            _makeContinuousR(data[prop])
-
 def makeContinuous(data):
     for continuousData in ['cardPriceHistory', 'covidData', 'cryptoData', 'trendData']:
-        _makeContinuousR(data[continuousData])
-        
+        for d in getNestedData(data[continuousData]):
+            _makeContinuous(d)
+    
+    
+def getNestedData(data, parentProp=''):
+    for prop in list(data):
+        if isinstance(prop, date):
+            yield data, parentProp
+            break
+        else:
+            yield from getNestedData(data[prop], prop)
+
+def getCC(d1, f1, d2, f2):
+    dsmall = min(d1, d2, key=lambda x: len(x))
+    dlarge = max(d1, d2, key=lambda x: len(x))
+
+    dcommon = [k for k in dsmall if k in dlarge]
+    if len(dcommon) <= 2:
+        return None
+
+    data1 = [v for k,v in dsmall.items() if k in dcommon]
+    data2 = [v for k,v in dlarge.items() if k in dcommon]
+    corr, _ = spearmanr(data1, data2)
+    if math.isnan(corr):
+        return None
+
+    return {'gpu': f1, 'factor': f2, 'correlation': corr}
+
+def getCCAll(data1, data2):
+    corrs = []
+    for d1, f1 in getNestedData(data1):
+        for d2, f2 in getNestedData(data2):
+            corr = getCC(d1, f1, d2, f2)
+            if corr is not None:
+                corrs.append(corr)
+    return corrs
+
+    
+
 def main():
     datadir = '../data/raw'
     data = loadDir(datadir)    
@@ -173,6 +189,16 @@ def main():
     
     #fill in gaps
     #makeContinuous(data)
+
+    priceHistory = data['cardPriceHistory']
+    others = {k: data[k] for k in ['covidData', 'cryptoData', 'trendData']}
+
+    corrs = getCCAll(priceHistory, others)
+    corrs = sorted(corrs, key=lambda x: x['correlation'], reverse=True)
+
+    for corr in corrs:
+        print(corr)
+
 
     return
             
