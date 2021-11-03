@@ -10,7 +10,7 @@ def getHoneyProductsUrl(product):
 def getHoneyAsinUrls(purl):
     r = requests.get(purl)
     if r.status_code != requests.codes.ok:
-        raise Exception("bad url")
+        raise Exception(r.status_code, r)
     
     json = r.json()
     products = json['data']['getSearchResultsData']['searchProduct']['products']

@@ -1,0 +1,27 @@
+{
+  "coins": [
+    "Aave",
+		"BinanceCoin",
+		"Bitcoin",
+		"Cardano",
+		"ChainLink",
+		"Cosmos",
+		"CryptocomCoin",
+		"Dogecoin",
+		"EOS",
+		"Ethereum",
+		"Iota",
+		"Litecoin",
+		"Monero",
+		"NEM",
+		"Polkadot",
+		"Solana",
+		"Stellar",
+		"Tether",
+		"Tron",
+		"USDCoin",
+		"Uniswap",
+		"WrappedBitcoin",
+		"XRP"
+  ]
+}
