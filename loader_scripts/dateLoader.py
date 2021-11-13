@@ -101,6 +101,8 @@ def transformSoftwareData(data):
     games = data['softwareData']['videogame_sales']
     newData = {}
     for i in range(len(games['Name'])):
+        if games['Global_Sales'][i] < 5.00:
+            continue
         year = games['Year'][i]
         if math.isnan(year):
             continue
@@ -119,7 +121,6 @@ def transformTrendData(data):
             d = date(int(year), int(month), int(day))
             newData[cardName][d] = trends[cardName][i]
     data['trendData']['googleTrendData'] = newData
-    
 
 def transformDates(data):
     transformCardData(data)         #card data
@@ -128,30 +129,45 @@ def transformDates(data):
     transformCryptoData(data)       #crypto data
     transformSoftwareData(data)     #softwareData
     transformTrendData(data)        #trend data
+    makeContinuous(data)
 
-def _makeContinuous(data):
-    dates = [key for key in data if isinstance(key, date)]
-    curr = min(dates)
-    end = max(dates)
-    fill = -1
-    while curr != end:
-        curr += timedelta(days=1)
-        if curr not in data:
-            data[curr] = fill
+def _makeContinuous(fdeltaTime, data):
+    ndata = {}
+    currDate = data + timedelta(fdeltaTime)
+
+    inc = 1 if fdeltaTime < 0 else -1
+    n = 0
+    while currDate != data:
+        ndata[currDate] = n/abs(fdeltaTime)
+        currDate += timedelta(inc)
+        n += 1
+    return ndata
 
 def makeContinuous(data):
-    for continuousData in ['cardPriceHistory', 'covidData', 'cryptoData', 'trendData']:
-        for d in getNestedData(data[continuousData]):
-            _makeContinuous(d)
+    keys = data['cardPriceHistory'].keys()
+    for continuousData in data.keys():
+        if continuousData in ['cardPriceHistory', 'covidData', 'cryptoData', 'trendData', 'cryptoCoins']:
+            continue
+        for d, pd, p in getNestedData(data[continuousData]):
+            fd = (date.today() - d).days
+            if fd > 4000:
+                del pd[p]
+            else:
+                pd[p] = {**_makeContinuous(-80, d), **_makeContinuous(fd, d)}
     
     
-def getNestedData(data, parentProp=''):
+def getNestedData(data, parentData = {}, parentProp=''):
+    if isinstance(data, date):
+        yield data, parentData, parentProp
+        return
     for prop in list(data):
+        if prop == 'cryptoCoins':
+            continue
         if isinstance(prop, date):
-            yield data, parentProp
+            yield data, parentData, parentProp
             break
         else:
-            yield from getNestedData(data[prop], prop)
+            yield from getNestedData(data[prop], data, prop)
 
 def getCC(d1, f1, d2, f2):
     dsmall = min(d1, d2, key=lambda x: len(x))
@@ -171,14 +187,13 @@ def getCC(d1, f1, d2, f2):
 
 def getCCAll(data1, data2):
     corrs = []
-    for d1, f1 in getNestedData(data1):
-        for d2, f2 in getNestedData(data2):
+    for d1, _, f1 in getNestedData(data1):
+        for d2, _, f2 in getNestedData(data2):
             corr = getCC(d1, f1, d2, f2)
             if corr is not None:
                 corrs.append(corr)
     return corrs
 
-    
 
 def main():
     datadir = '../data/raw'
@@ -186,14 +201,12 @@ def main():
     
     #get dates data
     transformDates(data)
-    
-    #fill in gaps
-    #makeContinuous(data)
 
     priceHistory = data['cardPriceHistory']
-    others = {k: data[k] for k in ['covidData', 'cryptoData', 'trendData']}
+    others = {k: data[k] for k in data.keys() if k != 'cardPriceHistory'}
 
-    corrs = getCCAll(priceHistory, others)
+
+    corrs = getCCAll(priceHistory, others) 
     corrs = sorted(corrs, key=lambda x: x['correlation'], reverse=True)
 
     for corr in corrs:
