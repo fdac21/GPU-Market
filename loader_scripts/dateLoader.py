@@ -4,6 +4,9 @@ import math
 from datetime import date, timedelta
 import pandas as pd
 from scipy.stats import spearmanr
+import base64
+import pickle
+from json import JSONEncoder
 
 def fn2pn(fn):
     return os.path.splitext(os.path.basename(fn))[0]
@@ -28,6 +31,7 @@ def loadFile(filePath):
 
 def loadDirR(path, data):
     for fileName in os.listdir(path):
+        #time.sleep(0.1)
         filePath = path + '/' + fileName
         if os.path.isdir(filePath):
             data[fileName] = {}
@@ -46,7 +50,7 @@ def _transformCardPriceHistory(data):
         datum = data[prop]
         year, month, day = datum['day'].split('-')
         d = date(int(year), int(month), int(day))
-        newData[d] = datum['lo']
+        newData[d] = datum['lo']/100
     return newData
 
 def transformCardPriceHistory(data):
@@ -194,25 +198,50 @@ def getCCAll(data1, data2):
                 corrs.append(corr)
     return corrs
 
+def load(path):
+    data = loadDir(path)
+    transformDates(data)
+    return data
+
+def convertDateTimes(data):
+    for prop in list(data.keys()):
+        if isinstance(data[prop], dict):
+            convertDateTimes(data[prop])
+        if isinstance(prop, date):
+            data[prop.isoformat()] = data[prop]
+            del data[prop]
+
 
 def main():
-    datadir = '../data/raw'
-    data = loadDir(datadir)    
+    data = load('../data/raw/')
     
-    #get dates data
-    transformDates(data)
+    '''
+    pickle.dump(data, open('time_series_data.pickle', 'wb'))
+    return
+    
+    bdata = pickle.dumps(data)
+    encoded = base64.b64encode(bdata)
+    with open('time_series_data.b64', 'wb') as f:
+        f.write(encoded)
+    return
+    '''
+
+    '''
+    convertDateTimes(data)
+    with open('time_series_data.json', 'w') as f:
+        json.dump(data, f)
+    return
+    '''
 
     priceHistory = data['cardPriceHistory']
     others = {k: data[k] for k in data.keys() if k != 'cardPriceHistory'}
-
 
     corrs = getCCAll(priceHistory, others) 
     corrs = sorted(corrs, key=lambda x: x['correlation'], reverse=True)
 
     for corr in corrs:
         print(corr)
-
-
+    
     return
             
 if __name__ == "__main__":

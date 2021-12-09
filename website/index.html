@@ -1,0 +1,353 @@
+<html lang='en'>
+
+<head>
+	<title>GPU Market</title>
+	<script src="https://unpkg.com/vue@next"></script>																<!--vue3-->
+	<script src="https://cdn.plot.ly/plotly-latest.min.js"></script>												<!--plotly-->
+	<!--<script src="https://unpkg.com/dayjs@1.8.21/dayjs.min.js"></script>-->										<!--day-->
+	<script src="https://cdn.jsdelivr.net/npm/vue3-treeselect@^0.1.0/dist/vue3-treeselect.umd.min.js"></script>		<!--treeselect-->
+	<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/vue3-treeselect@^0.1.0/dist/vue3-treeselect.min.css">	<!--treeselect css-->
+	<style>
+		.container {
+			width: 400px;
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+		}
+		input[type=range] {
+			width: 100%;
+		}
+		.rangeButton {
+			flex: 0 0 auto;
+			width: 20px;
+			height: 20px;
+			border-radius: 100%;
+			background: white;
+			border: 1px solid lightgrey;
+			cursor: pointer;
+			-webkit-appearance: none;
+		}
+	</style>
+</head>
+
+<body>
+	<div id='vue'>
+		<div class="container">
+			<toggle-list-item @toggle="toggle_normalize">Normalize</toggle-list-item>
+			<button class="rangeButton" @click="()=>inc_range(-1)">-</button>
+			<input type="range" @change='(e)=>DoCorrelationSlider(parseInt(e.target.value))' min="0" :max="computedCCs.length" value="0" ref="range">
+			<button class="rangeButton" @click="()=>inc_range(1)">+</button>
+		</div>
+		<div ref='plotly'></div>
+		<treeselect v-model="selected" :multiple="true" :options="data" value-consists-of="LEAF_PRIORITY" ref="mainSelect"></treeselect>
+		<div v-if='correlation != null'>
+			<p>Correlation: {{correlation}}</p>
+		</div>
+		<div v-if='debug'>
+			<button @click='copy'>Copy</button>
+			<ul>
+				<li v-for='sel,i in selected'>
+					<toggle-list-item :ref=`toggle_${i}`>{{sel}}</toggle-list-item>
+				</li>
+			</ul>
+		</div>
+	</div>
+</body>
+<script>
+	const app = Vue.createApp({
+		data: function () {
+			return {
+				selected: null,
+				normalize: false,
+				normalizeData: {
+					maxy: null,
+					miny: null,
+				},
+				computedCCs: [],
+				correlation: null,
+				data: [],
+				map: {},
+				debug: false,
+			};
+		},
+		watch: {
+			selected: function (newValue, oldValue) {
+				oldValue = oldValue || [];
+				const ov = new Set(oldValue);
+				const nv = new Set(newValue)
+				const ons = new Set([...nv].filter(x => !ov.has(x)));
+				const offs = new Set([...ov].filter(x => !nv.has(x)));
+				for (const id of ons) { //turn on
+					if (this.map.hasOwnProperty(id)) this.updateTrace(id, true);
+				}
+				for (const id of offs) { //turn off
+					if (this.map.hasOwnProperty(id)) this.updateTrace(id, false);
+				}
+
+				if(newValue.length == 2){
+					const [t0, t1] = this.normalizeTimeSeries(this.map[newValue[0]], this.map[newValue[1]]);
+					this.correlation = this.pcorr(t0, t1);
+				}else{
+					this.correlation = null;
+				}
+			},
+		},
+		methods: {
+			inc_range(i){
+				this.$refs.range.value = parseInt(this.$refs.range.value)+i;
+				this.DoCorrelationSlider(parseInt(this.$refs.range.value));
+			},
+			toggle_normalize(n){
+				this.normalize = n;
+				if(n){
+					const ys = this.selected.map(s => this.map[s].y).flat();
+					this.normalizeData.maxy = Math.max(...ys);
+					this.normalizeData.miny = Math.min(...ys);
+				}
+				this.selected.forEach(s => this.updateTrace(s, true));
+			},
+			interpolate(x0, x1, y0, y1, x){
+				return (y0*(x1-x) + y1*(x-x0))/(x1-x0);
+			},
+			normalizeY(ydata){
+				const maxy = Math.max(...ydata);
+				const miny = Math.min(...ydata);
+				const newYData = ydata.map(y => this.interpolate(miny, maxy, this.normalizeData.miny, this.normalizeData.maxy, y));
+				return newYData;
+			},
+			computeCC(){
+				const corrs = [];
+				const cardData = vm.data[5].children.map(v => v.children.map(c => c.id)).flat();
+				for(cd of cardData){
+					for(od of Object.keys(this.map)){
+						if(cd == od)
+							continue;
+
+						const [t0, t1] = this.normalizeTimeSeries(this.map[cd], this.map[od]);
+						if(t0.length == 0 || t1.length == 0)
+							continue;
+
+						const corr = this.pcorr(t0, t1);
+						if(Number.isNaN(corr))
+							continue;
+
+						corrs.push({card: cd, feature: od, correlation: corr});
+						//console.log(`${cd} =>${od}`)
+					}
+				}
+				this.computedCCs = corrs.sort((a,b) => a.correlation - b.correlation);
+			},
+			normalizeTimeSeries(data0, data1){
+				const newY0 = [];
+				const newY1 = [];
+
+				let x0 = data0.x.map(x => new Date(x));
+				let y0 = data0.y;
+				let x1 = data1.x.map(x => new Date(x));
+				let y1 = data1.y;
+
+				const minDate = new Date(Math.max(Math.min(...x0), Math.min(...x1)));
+				const maxDate = new Date(Math.min(Math.max(...x0), Math.max(...x1)));
+				
+				if((!minDate || !maxDate) || (minDate.getTime() > maxDate.getTime())){	
+					// console.warn('error calculating date on', data0.id, data1.id);
+					return [newY0, newY1];
+				}
+
+				let lastIdx0 = null;
+				let lastIdx1 = null;
+
+				let currDate = minDate;
+				for(currDate = minDate; currDate.getTime() != maxDate.getTime(); currDate.setUTCDate(currDate.getUTCDate() + 1)){
+					const idx0 = x0.findIndex(c => c.getTime() == currDate.getTime());
+					const idx1 = x1.findIndex(c => c.getTime() == currDate.getTime());
+
+					if(idx0 == -1 && idx1 == -1)	continue;
+
+					newY0.push(idx0 == -1 ? (y0[lastIdx0] || 0) : y0[idx0]);
+					newY1.push(idx1 == -1 ? (y1[lastIdx1] || 0) : y1[idx1]);
+					
+					if(idx0 != -1) lastIdx0 = idx0;
+					if(idx1 != -1) lastIdx1 = idx1;
+				}
+				return [newY0, newY1];
+			},
+			customCorrelation(x, y){
+
+			},
+			pcorr: function(x, y){
+				/*
+				let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0, sumY2 = 0;
+				const minLength = x.length = y.length = Math.min(x.length, y.length);
+				x.forEach((xi, idx) => {
+					const yi = y[idx];
+					sumX += xi;
+					sumY += yi;
+					sumXY += xi * yi;
+					sumX2 += xi * xi;
+					sumY2 += yi * yi;
+				});
+				const r = (minLength * sumXY - sumX * sumY) / Math.sqrt((minLength * sumX2 - sumX * sumX) * (minLength * sumY2 - sumY * sumY));
+				return r;
+				*/
+				let n = x.length
+				let nn = 0
+				const promedio = l => l.reduce((s, a) => s + a, 0) / l.length
+				const calc = (v, prom) => Math.sqrt(v.reduce((s, a) => (s + a * a), 0) - n * prom * prom)
+				for (let i = 0; i < n; i++, nn++) {
+					if ((!x[i] && x[i] !== 0) || (!y[i] && y[i] !== 0)) {
+						nn--;
+						continue;
+					}
+					x[nn] = x[i];
+					y[nn] = y[i];
+				}
+				if (n !== nn) {
+					x = x.splice(0, nn);
+					y = y.splice(0, nn);
+					n = nn;
+				}
+				const prom_x = promedio(x), prom_y = promedio(y);
+				return (x.map((e, i) => ({ x: e, y: y[i] })).reduce((v, a) => v + a.x * a.y, 0) - n * prom_x * prom_y) / (calc(x, prom_x) * calc(y, prom_y))
+			},
+			DoCorrelationSlider(idx){
+				const cc = this.computedCCs[idx];
+				const treeSelect = this.$refs.mainSelect;
+				treeSelect.clear();
+				[cc.card, cc.feature].forEach(c => {
+					treeSelect.select(treeSelect.getNode(c));
+				});
+			},
+			addTrace(name, xdata, ydata, visible = true) {
+				const idx = this.$refs.plotly.data.length;
+				this.map[name] = {
+					state: visible,
+					id: idx,
+					x: xdata,
+					y: ydata,
+				};
+				const data = {
+					x: xdata,
+					y: ydata,
+					visible, 
+					name,
+					mode: 'lines+markers',
+					hovertemplate: '<i>Price</i>: $%{y:.2f}<br><i>Date</i>: %{x}<br>'
+				}
+				Plotly.addTraces(this.$refs.plotly, [data], idx);
+			},
+			updateTrace(tid, val=null) {
+				const trace = this.map[tid];
+				if (val != null) {
+					trace.state = val;
+				} else {
+					trace.state = !trace.state;
+				}
+				const options = {
+					visible: trace.state,
+					y: this.normalize ? [this.normalizeY(trace.y)] : [trace.y],
+				};
+
+				Plotly.update(this.$refs.plotly, options, {}, [trace.id]);
+			},
+			process: function (data, bdata = [], tprop = '') {
+				for (const [prop, cdata] of Object.entries(data)) {
+					if (prop == 'cryptoCoins') continue;
+					const id = bdata.push({
+						id: `${tprop} ${prop}`,
+						label: prop,
+					}) - 1;
+					if (typeof cdata[Object.keys(cdata)[0]] != 'object') {
+						//console.log('adding trace', `${tprop} ${prop}`)
+						this.addTrace(`${tprop} ${prop}`, Object.keys(data[prop]), Object.values(data[prop]), false);
+					} else {
+						bdata[id].children = [];
+						this.process(cdata, bdata[id].children, `${tprop} ${prop}`);
+					}
+				}
+			},
+			copy: function(){
+				navigator.clipboard.writeText(Object.values(this.$refs).filter(i => i.active).map(i => i.item).join(','));
+			},
+			downloadCorrelations(){
+				var dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(this.computedCCs));
+				var downloadAnchorNode = document.createElement('a');
+				downloadAnchorNode.setAttribute("href",     dataStr);
+				downloadAnchorNode.setAttribute("download", "correlations.json");
+				document.body.appendChild(downloadAnchorNode); // required for firefox
+				downloadAnchorNode.click();
+				downloadAnchorNode.remove();
+			}
+		},
+		mounted: function () {
+			const d3 = Plotly.d3;
+			const gd3 = d3.select(this.$refs.plotly)
+				.style({
+					width: '100%',
+					height: "calc(100% - 100px)",
+					'margin-bottom': '33.3px',
+				});
+
+			const layout = {
+				margin: {
+					l: 50,
+					r: 20,
+					b: 20,
+					t: 20,
+					pad: 5
+				}, title: false,
+				/*showlegend: true,
+				legend: {
+					x: 1,
+					xanchor: 'right',
+					y: 1,
+					bgcolor: 'rgba(0,0,0,0)',
+				}*/
+				showlegend: false,
+			};
+
+			Plotly.newPlot(this.$refs.plotly, [], layout);
+			window.onresize = function () {
+				Plotly.Plots.resize(gd3.node());
+			}
+			fetch('time_series_data.json').then(r => r.json()).then(r => {
+				const data = [];
+				console.log('processing...')
+				this.process(r, data);
+				this.data = data;
+				console.log('computing correlations...')
+				this.computeCC();
+				console.log('done')
+				// this.downloadCorrelations();
+			});
+		},
+	});
+
+	app.component('toggle-list-item', {
+		template: `
+			<button @click='toggle' :style="[active ? {'background-color': 'green'} : {'background-color': 'white'}]">
+				<slot></slot>
+			</button>`,
+		methods: {
+			toggle() {
+				this.active = !this.active;
+				this.$emit('toggle', this.active);
+			}
+		},
+		data() {
+			return {
+				active: false
+			}
+		},
+	});
+  
+	app.config.warnHandler = () => null;
+
+	app.component('treeselect', window['vue3-treeselect'].Treeselect);
+	const vm = app.mount('#vue');
+
+	window.app = app;
+	window.vm = vm;
+</script>
+
+</html>
